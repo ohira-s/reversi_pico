@@ -19,3 +19,5 @@ Reversi is called as "Othello" in Japan.  So you will see "othello" in file name
   
 CPU-player uses two cores in PICO as possible to think game strategy.
 However in case it fails memory allocation unfortenately, uses main core (core0) only.
+
+CPU-player is still so weak in this version.
