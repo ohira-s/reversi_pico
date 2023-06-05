@@ -13,6 +13,9 @@ Reversi is called as "Othello" in Japan.  So you will see "othello" in file name
   CPU vs Man
   CPU vs CPU
   Man vs Man
+
+- How to play
+  Please read othello.pdf in doc folder.
   
-CPU use two cores in PICO as possible to think game strategy.
+CPU-player uses two cores in PICO as possible to think game strategy.
 However in case it fails memory allocation unfortenately, uses main core (core0) only.
