@@ -58,21 +58,6 @@ class Board_class:
     EVAL_MODE_eval = 4
     EVAL_MODE_eval_diff = 5
     eval_mode = EVAL_MODE_pieces_inverse
-    
-    # Evaluation values to put a piece at each cell, value should be lower 10000
-    EVAL_PUT0 = [                         
-            [99, 1, 5, 6, 6, 5, 1,99],
-            [ 1, 0, 7, 7, 7, 7, 0, 1],
-            [ 5, 7, 8, 8, 8, 8, 7, 5],
-            [ 6, 7, 8, 9, 9, 8, 7, 6],
-            [ 6, 7, 8, 9, 9, 8, 7, 6],
-            [ 5, 7, 8, 8, 8, 8, 7, 5],
-            [ 1, 0, 7, 7, 7, 7, 0, 1],
-            [99, 1, 5, 6, 6, 7, 1,99]
-        ]
-
-    # Select a evaluation values maxtrix(EVAL_PUT*) to put a piece on the game board
-    eval_place = None
 
     # Thought program working flag in multi-core
     bg_wakeup = False
@@ -90,8 +75,9 @@ class Board_class:
     # A next turn board chosen by multi-core process
     bg_selected_turn = None
 
-    left_cands = 0
-    left_cands_bg = 0
+    all_cands = 0
+    proc_cands = 0
+    proc_cands_bg = 0
 
     # Already evaluated board names list used for cutting path evaluated in past.
     evaluated_list = []
@@ -264,7 +250,7 @@ class Board_class:
     def is_critical_cell(self, x, y, turn_color, place_color):
         # Coners are the critical cells
         if (x == 0 or x == 7) and (y == 0 or y == 7):
-            return 59999 if turn_color == place_color else -59999
+            return 99999 if turn_color == place_color else -99999
         
         # Oblique next to a corner cell
         col = self.board[y][x]
@@ -274,7 +260,7 @@ class Board_class:
             x = x + (1 if x == 1 else -1)
             y = y + (1 if y == 1 else -1)
             if self.board[cy][cx] == Board_class.BLANK and self.board[y][x] != col:
-                return -39999 if turn_color == place_color else 39999
+                return -59999 if turn_color == place_color else 59999
 
             return -29999 if turn_color == place_color else 29999
         
@@ -282,14 +268,24 @@ class Board_class:
         if x == 0 or x == 7:
             if y == 1 or y == 6:
                 if self.board[x][y + (-1 if y == 1 else 1)] == Board_class.BLANK and self.board[x][y + (1 if y == 1 else -1)] != col:
-                    return -39999 if turn_color == place_color else 39999
+                    return -59999 if turn_color == place_color else 59999
 
+            '''
+            # Occupy a vetical side of frame
+            '''
             blank = 0
             white = 0
             black = 0
+            w = 0
+            b = 0
             prev = -1
             for cy in list(range(8)):
                 col = self.board[cy][x]
+                if col == Board_class.WHITE:
+                    w += 1
+                elif col == Board_class.BLACK:
+                    b += 1
+
                 if col != prev:
                     if col == Board_class.BLANK:
                         blank += 1
@@ -301,22 +297,39 @@ class Board_class:
                         black += 1
                         prev = Board_class.BLACK
                         
+                    if white * black != 0:
+                        break
+                    if white + black >= 2:
+                        break
+                        
             if white == 1 and black == 0:
-                return 19999 if turn_color == Board_class.WHITE else -19999
+                return 9999 + w * 10000 if turn_color == Board_class.WHITE else -9999 - w * 10000
             if black == 1 and white == 0:
-                return 19999 if turn_color == Board_class.BLACK else -19999
+                return 9999 + b * 10000 if turn_color == Board_class.BLACK else -9999 - b * 10000
+            '''
+            '''
 
         elif y == 0 or y == 7:
             if x == 1 or x == 6:
                 if self.board[x + (-1 if x == 1 else 1)][y] == Board_class.BLANK and self.board[x + (1 if x == 1 else -1)][y] != col:
-                    return -39999 if turn_color == place_color else 39999
+                    return -59999 if turn_color == place_color else 59999
 
+            '''
+            # Occupy a horizontal side of frame
+            '''
             blank = 0
             white = 0
             black = 0
+            w = 0
+            b = 0
             prev = -1
             for cx in list(range(8)):
                 col = self.board[y][cx]
+                if col == Board_class.WHITE:
+                    w += 1
+                elif col == Board_class.BLACK:
+                    b += 1
+                    
                 if col != prev:
                     if col == Board_class.BLANK:
                         blank += 1
@@ -327,11 +340,18 @@ class Board_class:
                     else:
                         black += 1
                         prev = Board_class.BLACK
+                        
+                    if white * black != 0:
+                        break
+                    if white + black >= 2:
+                        break
             
             if white == 1 and black == 0:
-                return 19999 if turn_color == Board_class.WHITE else -19999
+                return 9999 + w * 10000 if turn_color == Board_class.WHITE else -9999 - w * 10000
             if black == 1 and white == 0:
-                return 19999 if turn_color == Board_class.BLACK else -19999
+                return 9999 + b * 10000 if turn_color == Board_class.BLACK else -9999 - b * 10000
+            '''
+            '''
 
         return 0
     
@@ -341,6 +361,12 @@ class Board_class:
     #   return 1 if board1 is equal or better than board2,
     #   return 2 if board2 is better than board1
     # {"scores": score, "evaluations": evalv, "critical": False, "checkmate": False, "turns": current_level, "board": self}
+    #   scores is a tuple (white pieces, black pieces).
+    #   evaluations is a tuple (white evaluation, black evaluation).
+    #   candidates is number of places the oppornent can place in next turn.
+    #   critical: True if positive critical situation for turn color.
+    #   checkmate: True if any color gets the end of game without any piece on the board (score == 0)
+    #   turns: number of turns getting to this situation.
     '''
     def compare(self, board1, board2, idx):
         # Checkmate is the best
@@ -353,13 +379,13 @@ class Board_class:
             return 2 if idx == 1 and board2["scores"][0] == 0 else 1
 
         # Positive Critical case
-        if board1["critical"] and board1["scores"][idx] > 0:
-            if board2["critical"] and board2["scores"][idx] > 0:
+        if board1["critical"] and board1["evaluations"][idx] > 0:
+            if board2["critical"] and board2["evaluations"][idx] > 0:
                 # Large number of score is better
-                if board1["scores"][idx] > board2["scores"][idx]:
+                if board1["evaluations"][idx] > board2["evaluations"][idx]:
                     return 1
                 
-                if board1["scores"][idx] < board2["scores"][idx]:
+                if board1["evaluations"][idx] < board2["evaluations"][idx]:
                     return 2
                 
                 # Small number of turn is better
@@ -370,25 +396,25 @@ class Board_class:
                     return 2
                 
                 # Large evaluations value is better
-                if board1["evaluations"][idx] > board2["evaluations"][idx]:
+                if board1["scores"][idx] > board2["scores"][idx]:
                     return 1
         
-                if board1["evaluations"][idx] < board2["evaluations"][idx]:
+                if board1["scores"][idx] < board2["scores"][idx]:
                     return 2
             else:
                 return 1
 
-        elif board2["critical"] and board2["scores"][idx] > 0:
+        elif board2["critical"] and board2["evaluations"][idx] > 0:
             return 2
 
         # Negative Critical case
-        if board1["critical"] and board1["scores"][idx] < 0:
-            if board2["critical"] and board1["scores"][idx] < 0:
+        if board1["critical"] and board1["evaluations"][idx] < 0:
+            if board2["critical"] and board1["evaluations"][idx] < 0:
                 # Large number of score is better
-                if board1["scores"][idx] > board2["scores"][idx]:
+                if board1["evaluations"][idx] > board2["evaluations"][idx]:
                     return 1
                 
-                if board1["scores"][idx] < board2["scores"][idx]:
+                if board1["evaluations"][idx] < board2["evaluations"][idx]:
                     return 2
                 
                 # Large number of turn is better
@@ -399,15 +425,15 @@ class Board_class:
                     return 2
                 
                 # Large evaluations value is better
-                if board1["evaluations"][idx] > board2["evaluations"][idx]:
+                if board1["scores"][idx] > board2["scores"][idx]:
                     return 1
         
-                if board1["evaluations"][idx] < board2["evaluations"][idx]:
+                if board1["scores"][idx] < board2["scores"][idx]:
                     return 2
             else:
                 return 2
 
-        elif board2["critical"] and board2["scores"][idx] < 0:
+        elif board2["critical"] and board2["evaluations"][idx] < 0:
             return 1
 
         # Pieces take preference over candidates
@@ -418,13 +444,6 @@ class Board_class:
         
             if board1["scores"][idx] < board2["scores"][idx]:
                 return 2
-            
-            # Large candidates value if better
-            if board1["candidates"] > board2["candidates"]:
-                return 1
-        
-            if board1["candidates"] < board2["candidates"]:
-                return 2
 
         # Pieces (inverse) take preference over candidates
         elif Board_class.eval_mode == Board_class.EVAL_MODE_pieces_inverse:
@@ -434,30 +453,30 @@ class Board_class:
         
             if board1["scores"][idx] > board2["scores"][idx]:
                 return 2
-            
-            # Large candidates value if better
-            if board1["candidates"] > board2["candidates"]:
-                return 1
         
-            if board1["candidates"] < board2["candidates"]:
-                return 2
-        
-        # Candidates take preference over pieces
+        # Evaluations
         else:
-            # Large scores value if better
-            if board1["scores"][idx] > board2["scores"][idx]:
+            # Large evaluations value is better
+            if board1["evaluations"][idx] > board2["evaluations"][idx]:
                 return 1
-        
-            if board1["scores"][idx] < board2["scores"][idx]:
+            
+            if board1["evaluations"][idx] < board2["evaluations"][idx]:
                 return 2
 
-            # Large candidates value if better
-            if board1["candidates"] > board2["candidates"]:
-                return 1
-        
-            if board1["candidates"] < board2["candidates"]:
-                return 2
+        # Little candidates (for opponent) value if better
+        if board1["candidates"] < board2["candidates"]:
+            return 1
+    
+        if board1["candidates"] > board2["candidates"]:
+            return 2
 
+        # Large scores value if better
+        if board1["scores"][idx] > board2["scores"][idx]:
+            return 1
+    
+        if board1["scores"][idx] < board2["scores"][idx]:
+            return 2
+        
         # Large evaluations value is better
         if board1["evaluations"][idx] > board2["evaluations"][idx]:
             return 1
@@ -469,7 +488,10 @@ class Board_class:
         if board1["turns"] < board2["turns"]:
             return 1
 
-        return 2
+        # Make random strategy
+        ut = int(time.time() + board1["scores"][idx] + board2["scores"][idx])
+        rnd = ut % 2 + 1
+        return rnd
     
     '''
     # Try placing a 'pc' color piece at (px,py) and reverse the opponent piece.
@@ -525,7 +547,7 @@ class Board_class:
     # Place 'pc' color piece at (px,py) and return sum of number of reversed opponent pieces.
     # If 'reverse' == True, change the board matrix. False, not changed.
     '''
-    def place_at(self, px, py, pc, reverse=False):
+    def place_at(self, px, py, pc, reverse=False, possibility=False):
         if self.board[py][px] != Board_class.BLANK:
             return 0
 
@@ -533,6 +555,8 @@ class Board_class:
         for move in [(-1,0),(1,0),(0,-1),(0,1),(-1,-1),(1,-1),(-1,1),(1,1)]:
             rv = self.do_place(px, py, pc, move[0], move[1], reverse)
             if rv > 0:
+                if possibility:
+                    return rv
                 rev_total += rv
 
         return rev_total
@@ -546,9 +570,9 @@ class Board_class:
         for py in list(range(8)):
             for px in list(range(8)):
                 if self.board[py][px] == Board_class.BLANK:
-                    rv = self.place_at(px, py, pc)
+                    rv = self.place_at(px, py, pc, False, True)
                     if rv > 0:
-                        cands.append((px, py, rv, Board_class.eval_put[py][px]))
+                        cands.append((px, py, rv, 0))
                     
         return cands
 
@@ -571,6 +595,8 @@ class Board_class:
     # 'max_score' is the best board in possibles until now.
     '''
     def deep_turn(self, turn_color, place_color, current_level, max_score, background):
+#        print(">>> deep_turn: BG=", background , " / place=", place_color, " / depth=", current_level)
+
         # Get candidates list to place a piece
         cands = self.candidates(place_color)
         cands_len = len(cands)
@@ -594,7 +620,8 @@ class Board_class:
         if cands_len == 0:
             # Loose
             if turn_color == place_color:
-                return None
+                return {"scores": score, "candidates": 0, "evaluations": evalv, "critical": False, "checkmate": False, "turns": current_level, "board": None}
+#                return None
             # Win
             else:
                 return {"scores": score, "candidates": 0, "evaluations": evalv, "critical": False, "checkmate": True, "turns": current_level, "board": None}
@@ -602,28 +629,13 @@ class Board_class:
         #  Candidates list reduction
         elif cands_len > 1:
             # Sort candidates by evaluation value
-            cands.sort(key=lambda can: can[3], reverse=True)
-#            cands.sort(key=lambda can: 9999 if (can[0] == 0 or can[0] == 7) and (can[1] == 0 or can[1] == 7) else 0 if (can[0] <= 1 and can[1] <= 1) or (can[0] <= 1 and can[1] >= 6) or (can[0] >= 6 and can[1] <= 1) or (can[0] >= 6 and can[1] >= 6) else can[3], reverse=True)
-#            print("SORTED IN DEEP:", cands)
+#            cands.sort(key=lambda can: can[3], reverse=True)
 
             # Limit to maximum candidates number to decrese possibilities (= calculation time)
             # Remove lower evaluation value.
-            if cands_len >= Board_class.LIMIT_CANDIDATES:
-                center = int(Board_class.LIMIT_CANDIDATES / 2)
-                ev_border = int(cands[0][3] / 2)
-                border = 0
-                for cand in cands:
-                    if border >= center and cand[3] < ev_border:
-                        bx = cands[border][0]
-                        by = cands[border][1]
-                        if Board_class.eval_put[by][bx] == 0:
-                            border -= 1
-
-                        cands = cands[0:border]
-                        cands_len = len(cands)
-                        break
-                    
-                    border += 1
+            if cands_len > Board_class.LIMIT_CANDIDATES:
+                cands = cands[0:Board_class.LIMIT_CANDIDATES]
+                cands_len = len(cands)
 
         # Copy and make new board for simulation
         turn = self.copy("candidate")
@@ -640,11 +652,14 @@ class Board_class:
                 # name this board
                 name = turn.auto_name()
 
+                # Candidates
+                cl = len(turn.candidates(Board_class.WHITE if place_color == Board_class.BLACK else Board_class.BLACK))
+
                 # This board layout has been evaluated
                 if background:
                     if name in Board_class.evaluated_list_bg:
                         print("---CUT SAME PATH (BG):", name)
-                        return {"scores": (-899999, -899999), "candidates": cands_len, "evaluations": (-899999, -899999), "critical": False, "checkmate": False, "turns": 0, "board": None}
+                        return {"scores": (-100000, -100000), "candidates": cl, "evaluations": (-100000, -100000), "critical": False, "checkmate": False, "turns": 0, "board": None}
                     # New board layout in evaluation
                     else:
                         # Board names list sometimes causes memory allocation problem
@@ -658,7 +673,7 @@ class Board_class:
                 else:
                     if name in Board_class.evaluated_list:
                         print("---CUT SAME PATH (FG):", name)
-                        return {"scores": (-899999, -899999), "candidates": cands_len, "evaluations": (-899999, -899999), "critical": False, "checkmate": False, "turns": 0, "board": None}
+                        return {"scores": (-1000000, -100000), "candidates": cl, "evaluations": (-100000, -100000), "critical": False, "checkmate": False, "turns": 0, "board": None}
                     # New board layout in evaluation
                     else:
                         # Board names list sometimes causes memory allocation problem
@@ -668,21 +683,20 @@ class Board_class:
                         except:
                             print("-----CAN NOT USE NAME LIST (FG)---")
                             Board_class.evaluated_list.clear()
-                            gc.collect()
+#                            gc.collect()
 
                 # Board scores
                 sc = turn.scores()
                     
                 # Checkmate
                 if sc[0] == 0:          # white is zero (loose)
-                    return {"scores": sc, "candidates": cands_len, "evaluations": (-99999 if turn_color == Board_class.WHITE else 99999, 99999 if turn_color == Board_class.WHITE else -99999), "critical": False, "checkmate": True, "turns": 0, "board": None}
+                    return {"scores": sc, "candidates": cl, "evaluations": (-99999 if turn_color == Board_class.WHITE else 99999, 99999 if turn_color == Board_class.WHITE else -99999), "critical": False, "checkmate": True, "turns": 0, "board": None}
                 elif sc[1] == 0:        # black is zero (loose)
-                    return {"scores": sc, "candidates": cands_len, "evaluations": (99999 if turn_color == Board_class.WHITE else -99999, -99999 if turn_color == Board_class.WHITE else 99999), "critical": False, "checkmate": True, "turns": 0, "board": None}
+                    return {"scores": sc, "candidates": cl, "evaluations": (99999 if turn_color == Board_class.WHITE else -99999, -99999 if turn_color == Board_class.WHITE else 99999), "critical": False, "checkmate": True, "turns": 0, "board": None}
 
                 # Take a critical cell
                 critical = turn.is_critical_cell(cand[0], cand[1], turn_color, place_color)
                 if critical != 0:
-                    cl = len(turn.candidates(place_color))
                     # Placing piece is turn color
                     if turn_color == Board_class.WHITE:
                         cand_score =  {"place": (cand[0], cand[1], turn_color, place_color, "deep"), "scores": sc, "candidates": cl, "evaluations": (critical, -critical), "critical": critical > 0, "checkmate": False, "turns": current_level, "board": None}
@@ -690,17 +704,14 @@ class Board_class:
                     else:
                         cand_score = {"place": (cand[0], cand[1], turn_color, place_color, "deep"), "scores": sc, "candidates": cl, "evaluations": (-critical, critical), "critical": critical > 0, "checkmate": False, "turns": current_level, "board": None}
 
-                    # Bad critical, trace deep tree
+                    # Bad critical, give up this path
                     if not cand_score["critical"]:
-                        print("***GIVE UP WORST PATH***")
+                        print("***FIND WORST PATH***")
                         max_score = cand_score
+                        max_score["scores"] = (-100001,-100001)
+                        max_score["evaluations"] = (-100001,-100001)
                         break
-                    '''
-                    # Bad critical, trace deep tree
-                    if not cand_score["critical]:
-                        # Depth first trace for the simulation board
-                        cand_score = turn.deep_turn(turn_color, Board_class.BLACK if place_color == Board_class.WHITE else Board_class.WHITE, current_level + (1 if place_color == turn_color else 0), max_score, background)
-                    '''
+
                 # Take an ordinally cell
                 else:
                     # Depth first trace for the simulation board
@@ -716,7 +727,12 @@ class Board_class:
                         max_score = cand_score
                         max_score["board"] = None
                     else:
-                        if self.compare(cand_score, max_score, 0 if turn_color == Board_class.WHITE else 1) == 1:
+                        if cand_score["scores"][0] < 0 and cand_score["scores"][1] < 0:
+                            max_score = cand_score
+                            max_score["board"] = None
+                            print("***CUT WORST PATH***")
+                            break
+                        elif self.compare(cand_score, max_score, 0 if turn_color == Board_class.WHITE else 1) == 1:
                             max_score = cand_score
                             max_score["board"] = None
 
@@ -728,6 +744,15 @@ class Board_class:
         # Result
         return max_score
 
+    '''
+    # Register candidates of cell to place a piece in next turn,
+    # and get one candidate by yield.  Both main core and multi-core get a candidate by 'next(generator)'.
+    '''
+    cands_list_yield = None
+    cands_list_generator = None
+    def candidates_list(self, cands_list):
+        for cand in cands_list:
+            yield cand
 
     '''
     # Trace a game tree by recursion call (depth first) for both multi-cores
@@ -737,31 +762,49 @@ class Board_class:
     # 'place_color' is the 'my turn' color in simulation board.
     # 'background' = True is for 2nd(sub) core, False is 1st(main) core.
     '''
-    def half_turn(self, cands, turn_color, background):
-        global othello
+    def half_turn(self, turn_color, background):
+        global othello, cands_list_yield, cands_list_generator
 
         # Tracing tree job
-        cands_len = len(cands)
-        print("START JOB:", background, cands_len, cands)
+        print("START JOB:", "BG" if background else "FG")
         
         # Multi-core process
         if background:
             Board_class.bg_selected_turn = None
             Board_class.bg_working = True
-            Board_class.left_cands_bg = cands_len + 1
-            print("BACKGROUND:", cands_len)
+            Board_class.proc_cands_bg = 0
+#            Board_class.proc_cands_bg = cands_len + 1
         else:
-            Board_class.left_cands = cands_len + 1
+            Board_class.proc_cands = 0
+#            Board_class.proc_cands = cands_len + 1
 
         max_score = None
-        for cand in cands:
+        while True:
+            while not cands_list_yield is None:
+                time.sleep(0.1)
+                
+            try:
+                if background:
+                    cands_list_yield = "M"
+                else:
+                    cands_list_yield = "C"
+                
+                cand = next(cands_list_generator)
+                print("===GET CANDIDATE:", cands_list_yield, "=", cand)
+                cands_list_yield = None
+                    
+            except:
+                print("======END OF CANDIDATES LIST:", cands_list_yield)
+                cands_list_yield = None
+                break;
+
             # Clear evaluated boards list
             if background:
                 Board_class.evaluated_list_bg.clear()
-                Board_class.left_cands_bg -= 1
+                Board_class.proc_cands_bg += 1
             else:
                 Board_class.evaluated_list.clear()
-                Board_class.left_cands -= 1
+                Board_class.proc_cands += 1
 
 #            gc.collect()
 
@@ -776,35 +819,33 @@ class Board_class:
                     Board_class.evaluating_places[1] = (cand[0], cand[1])
                 else:
                     Board_class.evaluating_places[0] = (cand[0], cand[1])
-                
-                # Show the current CPU thought in main core (it seems to have something problems SPI/UART use in 2nd core)
-                if not background:
+                    # Show the current CPU thought in main core (it seems to have something problems SPI/UART use in 2nd core)
                     display_othello(othello, turn_color)
-                    
 ###DEBUG###                print("HALF PLCE AT:", cand[0], cand[1], turn_color, turn_color, "BG=", background)
                 
                 # Checkmate
                 sc = turn.scores()
+                cl = len(turn.candidates(Board_class.WHITE if turn_color == Board_class.BLACK else Board_class.BLACK))
                 if sc[0] == 0:          # white is zero (loose)
                     if background:
                         Board_class.evaluating_places[1] = (-1, -1)
                     else:
                         Board_class.evaluating_places[0] = (-1, -1)
 
-                    return {"place": (cand[0], cand[1], turn_color, turn_color, "half"), "scores": turn.scores(), "candidates": cands_len, "evaluations": (-99999 if turn_color == Board_class.WHITE else 99999, 99999 if turn_color == Board_class.WHITE else -99999), "critical": False, "checkmate": True, "turns": 0, "board": turn}
+                    return {"place": (cand[0], cand[1], turn_color, turn_color, "half"), "scores": turn.scores(), "candidates": cl, "evaluations": (-99999 if turn_color == Board_class.WHITE else 99999, 99999 if turn_color == Board_class.WHITE else -99999), "critical": False, "checkmate": True, "turns": 0, "board": turn}
 
                 elif sc[1] == 0:        # black is zero (loose)
                     if background:
                         Board_class.evaluating_places[1] = (-1, -1)
                     else:
                         Board_class.evaluating_places[0] = (-1, -1)
+                        display_othello(othello, turn_color)
 
-                    return {"place": (cand[0], cand[1], turn_color, "half"), "scores": turn.scores(), "candidates": cands_len, "evaluations": (99999 if turn_color == Board_class.WHITE else -99999, -99999 if turn_color == Board_class.WHITE else 99999), "critical": False, "checkmate": True, "turns": 0, "board": turn}
-                    
+                    return {"place": (cand[0], cand[1], turn_color, "half"), "scores": turn.scores(), "candidates": cl, "evaluations": (99999 if turn_color == Board_class.WHITE else -99999, -99999 if turn_color == Board_class.WHITE else 99999), "critical": False, "checkmate": True, "turns": 0, "board": turn}
+
                 # Take a critical cell
                 critical = turn.is_critical_cell(cand[0], cand[1], turn_color, turn_color)
                 if critical != 0:
-                    cl = len(turn.candidates(turn_color))
                     # is_critical_cell is lways positive logic
                     # Place white piece at a critical cell
                     if turn_color == Board_class.WHITE:
@@ -818,20 +859,15 @@ class Board_class:
                         Board_class.evaluating_places[1] = (-1, -1)
                     else:
                         Board_class.evaluating_places[0] = (-1, -1)
+                        display_othello(othello, turn_color)
 
-                    '''
-                    # Bad critical, trace deep tree
-                    if not cand_score["critical"]:
-                        cand_score = turn.deep_turn(turn_color, Board_class.BLACK if turn_color == Board_class.WHITE else Board_class.WHITE, 1, max_score, background)
-###DEBUG###                        print("*****RETURN OF DEEP (CRITICAL):", cand_score, "BG=", background)
-                    '''
                 # Ordinal cell
                 else:
                     # Depth first traverse
                     if max_score is None:
                         # Get scores and evaluation values of this board
                         evalv = turn.evaluations()
-                        max_score = {"place": (cand[0], cand[1], turn_color, turn_color, "half"), "scores": sc, "candidates": len(turn.candidates(turn_color)), "evaluations": evalv, "critical": False, "checkmate": False, "turns": 0, "board": turn}
+                        max_score = {"place": (cand[0], cand[1], turn_color, turn_color, "half"), "scores": sc, "candidates": cl, "evaluations": evalv, "critical": False, "checkmate": False, "turns": 0, "board": turn}
 
                     cand_score = turn.deep_turn(turn_color, Board_class.BLACK if turn_color == Board_class.WHITE else Board_class.WHITE, 1, max_score, background)
 ###DEBUG###                    print("*****RETURN OF DEEP(ORDINAL):", cand_score, "BG=", background)
@@ -843,26 +879,27 @@ class Board_class:
                         max_score["board"] = turn
                     else:
                         if self.compare(cand_score, max_score, 0 if turn_color == Board_class.WHITE else 1) == 1:
-#                            max_score["board"].release()
-#                            del max_score["board"]
                             max_score = cand_score
                             max_score["board"] = turn
-                            
+                '''  
                 # No candidate
                 else:
                     turn.release()
                     del turn
+                '''
 
             # There is noweher to place a piece
             else:
+                '''
                 turn.release()
                 del turn
+                '''
                 
                 if background:
                     Board_class.evaluating_places[1] = (-1, -1)
                 else:
                     Board_class.evaluating_places[0] = (-1, -1)
-                display_othello(othello, turn_color)
+                    display_othello(othello, turn_color)
                 
 
         # Store the background result in the instance variables
@@ -887,12 +924,12 @@ class Board_class:
         # Loop during be terminated (NOT SUPPORT CURRENTLY)
         while not Board_class.bg_terminate:
             # Wait for next job
-            while Board_class.bg_cands is None:
+            while not Board_class.bg_cands:
                 time.sleep(0.1)
 
             # Done a job, go to waiting mode
-            self.half_turn(Board_class.bg_cands, Board_class.bg_turn_color, True)
-            Board_class.bg_cands = None
+            self.half_turn(Board_class.bg_turn_color, True)
+            Board_class.bg_cands = False
             Board_class.bg_turn_color = Board_class.BLANK
             Board_class.bg_working = False
 
@@ -922,11 +959,11 @@ class Board_class:
     # 'turn_color' is the color of the current turn (white or black)
     '''
     def next_turn(self, turn_color):
-        global othello
+        global othello, cands_list_yield, cands_list_generator
 
         gc.collect()
-        Board_class.left_cands = 0
-        Board_class.left_cands_bg = 0
+        Board_class.proc_cands = 0
+        Board_class.proc_cands_bg = 0
 
         # Get cells being able to place a piece
         cands = self.candidates(turn_color)
@@ -948,41 +985,22 @@ class Board_class:
             return {"scores": score, "candidates": cands_len, "evaluations": evalv, "critical": False, "checkmate": False, "turns": 1, "board": turn}            
 
         # Candidates list reduction
-#        elif cands_len > 1:
         else:
             # Sort candidates by evaluation value
-            cands.sort(key=lambda can: can[3], reverse=True)
+#            cands.sort(key=lambda can: can[3], reverse=True)
 ###DEBUG###            print("SORTED:", cands)
 
             # Limit to maximum candidates number to decrese possibilities (= calculation time)
             # Remove lower evaluation value.
             if cands_len >= Board_class.LIMIT_CANDIDATES:
-                center = int(Board_class.LIMIT_CANDIDATES / 2)
-                ev_border = int(cands[0][3] / 2)
-                border = 0
-                for cand in cands:
-                    if border >= center and cand[3] < ev_border:
-                        # Take even number of candidates for dual core cpus
-                        if (border % 2) == 1 and border + 1 < cands_len:
-                            border += 1
-                            bx = cands[border][0]
-                            by = cands[border][1]
-                            if Board_class.eval_put[by][bx] == 0:
-                                border -= 1
-
-                        cands = cands[0:border]
-                        cands_len = len(cands)
-                        break
-                    
-                    border += 1
-
-            print("LIMITED:", cands)
+                cands = cands[0:Board_class.LIMIT_CANDIDATES]
+                cands_len = len(cands)
+                print("LIMITED:", cands)
         
         # Candidates list
-        # Divide the candidate list into two lists
-        h = int(cands_len/2)
-        cands1 = cands[0:h]
-        cands2 = cands[h:cands_len]
+        Board_class.all_cands = len(cands)
+        cands_list_generator = self.candidates_list(cands)
+        cands_list_yield = None
 
         # Clear multi-core result
         Board_class.bg_selected_turn = None
@@ -992,17 +1010,15 @@ class Board_class:
         if self.start_multi_core():
             Board_class.bg_working = True
             Board_class.bg_turn_color = turn_color
-            Board_class.bg_cands = cands2
+            Board_class.bg_cands = True
         else:
             Board_class.bg_working = False
-            Board_class.bg_cands = None
             Board_class.bg_turn_color = Board_class.BLANK
+            Board_class.bg_cands = False
             print("MULTI-CORE DOSE NOT WORK. USE ONLY MAIN CORE")
-            cands1 += cands2
 
         # Candidates list-1 is traced with main core
-        selected_turn = self.half_turn(cands1, turn_color, False)
-        Board_class.left_cands = 0
+        selected_turn = self.half_turn(turn_color, False)
         
         # Wait for end of multi-core job
 ###DEBUG###        print("WAIT FOR BG-JOB:", Board_class.bg_working)
@@ -1011,7 +1027,9 @@ class Board_class:
             display_othello(othello, turn_color)
             time.sleep(1)
                 
-        Board_class.left_cands_bg = 0
+        Board_class.all_cands = 0
+        Board_class.proc_cands = 0
+        Board_class.proc_cands_bg = 0
         print("=======JOIN MULTI-CORES.=======")
         print("CORE0:", selected_turn)
         print("CORE1:", Board_class.bg_selected_turn)
@@ -1309,9 +1327,9 @@ def display_othello(othello, next_turn):
         if row == 0:
             col = LCD.WHITE if Board_class.white_is_cpu else LCD.YELLOW
             if Board_class.white_is_cpu:
-                GT.show_graphic_text(str(Board_class.LIMIT_CANDIDATES), 3, 25, 2, 2, 0, col, LCD.BROWN)
+                GT.show_graphic_text(str(Board_class.LIMIT_CANDIDATES), 4, 35, 1, 1, 0, col, LCD.BROWN)
                 GT.show_graphic_text("C", 26, 20, 3, 3, 0, col, LCD.BROWN)
-                GT.show_graphic_text(str(Board_class.MAX_DEPTH), 57, 25, 2, 2, 0, col, LCD.BROWN)
+                GT.show_graphic_text(str(Board_class.MAX_DEPTH), 57, 35, 1, 1, 0, col, LCD.BROWN)
             else:
                 GT.show_graphic_text("M", 26, 20, 3, 3, 0, col, LCD.BROWN)
             
@@ -1355,18 +1373,16 @@ def display_othello(othello, next_turn):
                 GT.show_graphic_text("PL", 410, 43, 3, 3, 5, LCD.MINT, LCD.BROWN)
 
             if Board_class.in_play:
-                if Board_class.bg_working:
-                    GT.show_graphic_text("S" + str(Board_class.left_cands) + "M" + str(Board_class.left_cands_bg), 410, 13, 1, 1, 3, LCD.MINT, LCD.BROWN)
-                elif Board_class.left_cands > 0:
-                    GT.show_graphic_text("S" + str(Board_class.left_cands), 410, 13, 1, 1, 2, LCD.MINT, LCD.BROWN)
+                if Board_class.all_cands > 0:
+                    GT.show_graphic_text(str(Board_class.all_cands) + "S" + str(Board_class.proc_cands) + "M" + str(Board_class.proc_cands_bg), 405, 13, 1, 1, 3, LCD.MINT, LCD.BROWN)
 
         # Black turn
         elif row == 3:
             col = LCD.BLACK if Board_class.black_is_cpu else LCD.YELLOW
             if Board_class.black_is_cpu:
-                GT.show_graphic_text(str(Board_class.LIMIT_CANDIDATES), 3, 40, 2, 2, 0, col, LCD.BROWN)
+                GT.show_graphic_text(str(Board_class.LIMIT_CANDIDATES), 4, 50, 1, 1, 0, col, LCD.BROWN)
                 GT.show_graphic_text("C", 26, 35, 3, 3, 0, col, LCD.BROWN)
-                GT.show_graphic_text(str(Board_class.MAX_DEPTH), 57, 40, 2, 2, 0, col, LCD.BROWN)
+                GT.show_graphic_text(str(Board_class.MAX_DEPTH), 57, 50, 1, 1, 0, col, LCD.BROWN)
             else:
                 GT.show_graphic_text("M", 26, 35, 3, 3, 0, col, LCD.BROWN)
 
@@ -1458,7 +1474,7 @@ def touch_action(othello, x, y, player):
         cx = int((x - 80) / 40)
         cy = int(y/40)
         if 0 <= cx and cx <= 7 and 0 <= cy and cy <= 7:
-            if othello.place_at(cx, cy, player) > 0:
+            if othello.place_at(cx, cy, player, False, True) > 0:
                 return (cx, cy)
 
     elif x >= 440:
@@ -1621,7 +1637,6 @@ if __name__=='__main__':
 
     # Othello game
     othello = Board_class("playing")
-    Board_class.eval_put = Board_class.EVAL_PUT0
     othello.restart([(3,3),(4,4)], [(4,3),(3,4)])
     othello.dump()
     
@@ -1655,43 +1670,38 @@ if __name__=='__main__':
         display_othello(othello, Board_class.WHITE)
         
         # Thought depth control
-        Board_class.LIMIT_CANDIDATES = 8
-        Board_class.MAX_DEPTH = 2
-
+        Board_class.LIMIT_CANDIDATES = 16
+        Board_class.MAX_DEPTH = 3
 #        Board_class.eval_mode = Board_class.EVAL_MODE_pieces
         Board_class.eval_mode = Board_class.EVAL_MODE_pieces_inverse
 
         while pass_num < 2:
             # Thought depth control
-            if turn == 16:
-                Board_class.LIMIT_CANDIDATES = 8
-                Board_class.MAX_DEPTH = 3
-
+            if turn == 8:
+                Board_class.LIMIT_CANDIDATES = 16
+                Board_class.MAX_DEPTH = 4
 #                Board_class.eval_mode = Board_class.EVAL_MODE_pieces
                 Board_class.eval_mode = Board_class.EVAL_MODE_pieces_inverse
-
-                ev = othello.evaluations()
-            elif turn == 24:
-                Board_class.LIMIT_CANDIDATES = 10
-                Board_class.MAX_DEPTH = 3
-
-#                Board_class.eval_mode = Board_class.EVAL_MODE_pieces
-                Board_class.eval_mode = Board_class.EVAL_MODE_pieces_inverse
-#                ev = othello.evaluations()
-            elif turn == 36: 
-                Board_class.LIMIT_CANDIDATES = 10
-                Board_class.MAX_DEPTH = 7
-
-                Board_class.eval_mode = Board_class.EVAL_MODE_pieces
-#                Board_class.eval_mode = Board_class.EVAL_MODE_pieces_inverse
-#                ev = othello.evaluations()
-            elif turn == 40:
-                Board_class.LIMIT_CANDIDATES = 10
+            elif turn == 20:
+                Board_class.LIMIT_CANDIDATES = 16
                 Board_class.MAX_DEPTH = 6
-
+#                Board_class.eval_mode = Board_class.EVAL_MODE_pieces
+                Board_class.eval_mode = Board_class.EVAL_MODE_pieces_inverse
+            elif turn == 32: 
+                Board_class.LIMIT_CANDIDATES = 16
+                Board_class.MAX_DEPTH = 6
                 Board_class.eval_mode = Board_class.EVAL_MODE_pieces
 #                Board_class.eval_mode = Board_class.EVAL_MODE_pieces_inverse
-#                ev = othello.evaluations()
+            elif turn == 42: 
+                Board_class.LIMIT_CANDIDATES = 16
+                Board_class.MAX_DEPTH = 6
+                Board_class.eval_mode = Board_class.EVAL_MODE_pieces
+#                Board_class.eval_mode = Board_class.EVAL_MODE_pieces_inverse
+            elif turn == 50:
+                Board_class.LIMIT_CANDIDATES = 16
+                Board_class.MAX_DEPTH = 7
+                Board_class.eval_mode = Board_class.EVAL_MODE_pieces
+#                Board_class.eval_mode = Board_class.EVAL_MODE_pieces_inverse
         
             # White turn
             turn += 1
