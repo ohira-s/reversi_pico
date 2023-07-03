@@ -62,107 +62,60 @@ class Board_class:
     auto_mode = False
     
     # Turn and strategy: turn:[candidates, depth, eval_mode] ,turn must be even number
-    strategy = {0:[16,1,2], 6:[16,2,2], 10:[16,3,3], 18:[16,4,0], 28:[16,4,1]}
+    strategies = [
+        {0:[16,1,2], 8:[16,2,3], 16:[16,4,0], 32:[16,4,1]},
+        {0:[16,1,2], 6:[16,2,2], 10:[16,3,3], 22:[16,4,0], 32:[16,4,1]},
+        {0:[16,1,0], 8:[16,2,0], 16:[16,4,0]}
+    ]
+    strategy = strategies[0]
 
-
-    # Critical case: 1=place color, 2=oppornent color, 8=blank
+    # (x,y): cell placed a piece
+    # [sx,sy,dx,dy,[[pattern0,value0],[pattern1,value1],...]]
+    # sx,sy: cell to start checking petterns
+    # dx,dy: delta x and y to add sx,sy to get cells for checking patterns
+    # pattern: 1=place color, 2=oppornent color, 8=blank
+    # value: evaluation value for a check,
+    #   value > 0: good strategy, equal or more than 999999 means strongly recommended strategy.
+    #   value < 0: bad strategy.
+    # Program automattically detects a symmetry pattern, so patterns should be defined in x:0..3 andy:0..3 area.
     critical_case = {
-        (0,0):[[0,0, 1, 0,[[18111118,-99999]]],
-               [0,0, 0, 1,[[18111118,-99999]]],
-               [0,0, 1, 1,[[18111118,-99999]]],
-               [0,0, 0, 0,[[1,1000000]]]],
+        (0,0):[[0,0, 1, 0,[[18111118, -99999]]],
+               [0,0, 0, 1,[[18111118, -99999]]],
+               [0,0, 1, 1,[[18111118, -99999]]],
+               [0,0, 0, 0,[[1,       1000000]]]],
 
-        (7,0):[[7,0,-1, 0,[[18111118,-99999]]],
-               [7,0, 0, 1,[[18111118,-99999]]],
-               [7,0,-1, 1,[[18111118,-99999]]],
-               [7,0, 0, 0,[[1,1000000]]]],
+        (1,0):[[0,0, 1, 0,[[8181,      -9998],
+                           [81181,     -9998],
+                           [811181,    -9998],
+                           [8188,     999999],
+                           [81188,    999999],
+                           [21222228, 999999],
+                           [81828,    999999]]]],
 
-        (7,7):[[7,7,-1, 0,[[18111118,-99999]]],
-               [7,7, 0,-1,[[18111118,-99999]]],
-               [7,7,-1,-1,[[18111118,-99999]]],
-               [7,7, 0, 0,[[1,1000000]]]],
+        (2,0):[[0,0, 1, 0,[[81181,     -9998],
+                           [81188,    999999],
+                           [811181,    -9998],
+                           [82181,    999999],
+                           [82182,    -99999],
+                           [8211118,   -9998],
+                           [8822128,  -99999],
+                           [8821228,  -99999],
+                           [8811818,   99999],
+                           [8818118,   99999],
+                           [82111118, -99999]]]],
 
-        (1,0):[[0,0, 1, 0,[[8181,   -9998],
-                           [81181,  -9998],
-                           [811181, -9998],
-                           [8188,  999999],
-                           [81828, 999999]]]],
-        (2,0):[[0,0, 1, 0,[[81181,    -9998],
-                           [811181,   -9998],
-                           [82181,   999999],
-                           [82188,        0],
-                           [82182,   -99999],
-                           [8211118,  -9998],
-                           [82111118,-99999]]]],
-        (3,0):[[0,0, 1, 0,[[8181,    -9998],
-                           [811181,  -9998],
-                           [88212288,-9998]]],
-               [7,0,-1, 0,[[81181,   -9998]]]],
-        (4,0):[[0,0, 1, 0,[[81181,   -9998]]],
-               [7,0,-1, 0,[[811181,  -9998],
-                           [88212288,-9998],
-                           [8181,    -9998]]]],
-        (5,0):[[7,0,-1, 0,[[81181,    -9998],
-                           [811181,   -9998],
-                           [82181,   999999],
-                           [82188,        0],
-                           [82182,   -99999],
-                           [8211118,  -9998],
-                           [82111118,-99999]]]],
-        (6,0):[[7,0,-1, 0,[[8181,   -9998],
-                           [81181,  -9998],
-                           [811181, -9998],
-                           [8188,  999999],
-                           [81828, 999999]]]],
+        (3,0):[[0,0, 1, 0,[[8181,      -9998],
+                           [811181,    -9998],
+                           [882128,   -99999],
+                           [8811818,   99999],
+                           [88212288, -99998]]],
+               [7,0,-1, 0,[[81181,     -9998]]]],
 
-        (1,7):[[0,7, 1, 0,[[8181,   -9998],
-                           [81181 , -9998],
-                           [811181, -9998],
-                           [8188,  999999],
-                           [81828, 999999]]]],
-        (2,7):[[0,7, 1, 0,[[81181,    -9998],
-                           [811181,   -9998],
-                           [82181,   999999],
-                           [82188,        0],
-                           [82182,   -99999],
-                           [8211118,  -9998],
-                           [82111118,-99999]]]],
-        (3,7):[[0,7, 1, 0,[[8181,    -9998],
-                           [811181,  -9998],
-                           [88212288,-9998]]],
-               [7,7,-1, 0,[[81181,   -9998]]]],
-        (4,7):[[0,7, 1, 0,[[81181,   -9998]]],
-               [7,7,-1, 0,[[811181,  -9998],
-                           [88212288,-9998],
-                           [8181,    -9998]]]],
-        (5,7):[[7,7,-1, 0,[[81181,    -9998],
-                           [811181,   -9998],
-                           [82181,   999999],
-                           [82188,        0],
-                           [82182,   -99999],
-                           [8211118,  -9998],
-                           [82111118,-99999]]]],
-        (6,7):[[7,7,-1, 0,[[8181,   -9998],
-                           [81181,  -9998],
-                           [811181, -9998]]],
-               [7,0,-1, 0,[[8188,  999999],
-                           [81828, 999999]]]],
-
-        (1,1):[[0,0, 1, 1,[[8181,   -9997],
-                           [81181,  -9997],
-                           [811181, -9997],
-                           [8111181,-9997]]],
-               [1,1, 0, 0,[[1,      -9998]]]],
-        (1,6):[[0,7, 1,-1,[[8181,   -9997],
-                           [81181,  -9997],
-                           [811181, -9997],
-                           [8111181,-9997]]],
-               [1,6, 0, 0,[[1,      -9998]]]],
-        (6,6):[[7,7,-1,-1,[[8181,   -1999],
-                           [81181,  -9997],
-                           [811181, -9997],
-                           [8111181,-9997]]],
-               [6,6, 0, 0,[[1,      -9998]]]]
+        (1,1):[[0,0, 1, 1,[[8181,      -9997],
+                           [81181,     -9997],
+                           [811181,    -9997],
+                           [8111181,   -9997]]],
+               [1,1, 0, 0,[[1,         -9998]]]]
     }
 
     # Thought program working flag in multi-core
@@ -295,13 +248,35 @@ class Board_class:
         # Check critical case
         posi = 0
         nega = 0
-        place = (x, y)
+        if x >= 4:
+            px = 7 - x
+            mx = -1
+        else:
+            px = x
+            mx = 1
+
+        if y >= 4:
+            py = 7 - y
+            my = -1
+        else:
+            py = y
+            my = 1
+
+        place = (px, py)
         if place in Board_class.critical_case:
             for case in Board_class.critical_case[place]:
                 ptns = case[4]
                 for ptn in ptns:
                     sx = case[0]
+                    dx = case[2] * mx
+                    if mx == -1:
+                        sx = 7 - sx
+
                     sy = case[1]
+                    dy = case[3] * my
+                    if my == -1:
+                        sy = 7 - sy
+
                     bd = 0
                     for i in list(range(len(str(ptn[0])))):
                         p = self.board[sy][sx]
@@ -313,45 +288,15 @@ class Board_class:
                             pn = 2
                             
                         bd = bd * 10 + pn
-                        sx += case[2]
-                        sy += case[3]
+                        sx += dx
+                        sy += dy
 
                     if bd == ptn[0]:
-#                        print("===CRITICAL MATCH(N):", place, ptn)
+#                        print("===CRITICAL MATCH(N):", x, y, place, ptn)
                         if ptn[1] > 0:
                             posi += ptn[1]
                         else:
                             nega += ptn[1]
-
-        # x-y symmetry
-        if x != y:
-            place = (y, x)
-            if place in Board_class.critical_case:
-                for case in Board_class.critical_case[place]:
-                    ptns = case[4]
-                    for ptn in ptns:
-                        sx = case[1]
-                        sy = case[0]
-                        bd = 0
-                        for i in list(range(len(str(ptn[0])))):
-                            p = self.board[sy][sx]
-                            if p == place_color:
-                                pn = 1
-                            elif p == Board_class.BLANK:
-                                pn = 8
-                            else:
-                                pn = 2
-                                
-                            bd = bd * 10 + pn
-                            sx += case[3]
-                            sy += case[2]
-
-                        if bd == ptn[0]:
-#                            print("===CRITICAL MATCH(S):", place, ptn)
-                            if ptn[1] > 0:
-                                posi += ptn[1]
-                            else:
-                                nega += ptn[1]
 
         # Periphery
         if x == 0 or x == 7:
@@ -761,7 +706,7 @@ class Board_class:
                 # No candidate to place
                 elif cl == 0:
 #                    print("***NO PLACE D***")
-                    cand_score = {"scores": sc, "mycands": cands_len, "opcands": cl, "evaluations": (100000, -100000) if place_color == Board_class.WHITE else (-100000, 100000), "critical": True, "checkmate": False, "turns": current_level, "board": None}
+                    cand_score = {"scores": sc, "mycands": cands_len, "opcands": cl, "evaluations": (100000, -100000) if place_color == Board_class.WHITE else (-100000, 100000), "critical": True, "checkmate": True, "turns": current_level, "board": None}
 
                 # Think more deeply
                 else:
@@ -1707,6 +1652,7 @@ if __name__=='__main__':
     while True:
         # Initialize the board
         Board_class.in_play = False
+        display_othello(othello, Board_class.WHITE)
         turn = 0
         pass_num = 0
         Board_class.auto_mode = False
@@ -1728,6 +1674,9 @@ if __name__=='__main__':
         undo_board.set(othello)
         display_othello(othello, Board_class.WHITE)
         othello.dump()
+        
+        # Random strategy
+        Board_class.strategy = Board_class.strategies[int(time.time()) % len(Board_class.strategies)]
 
         # One game loop
         while pass_num < 2:
