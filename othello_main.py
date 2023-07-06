@@ -8,6 +8,7 @@
 '''
 
 import time, machine, _thread
+import re
 import gc
 
 # Interface class for WAVESHARE Pico-Res Touch-LCD-3.5inch
@@ -57,6 +58,7 @@ class Board_class:
     EVAL_MODE_pieces = 1
     EVAL_MODE_pieces_inverse = 2
     EVAL_MODE_few_candidates = 3
+    EVAL_MODE_many_places = 4
     
     eval_mode = EVAL_MODE_pieces_inverse
     auto_mode = False
@@ -67,55 +69,112 @@ class Board_class:
         {0:[16,1,2], 6:[16,2,2], 10:[16,3,3], 22:[16,4,0], 32:[16,4,1]},
         {0:[16,1,0], 8:[16,2,0], 16:[16,4,0]}
     ]
+    ''' Stragegy for debug
+    strategies = [
+        {0:[16,2,1]}
+    ]
+    '''
     strategy = strategies[0]
 
     # (x,y): cell placed a piece
     # [sx,sy,dx,dy,[[pattern0,value0],[pattern1,value1],...]]
     # sx,sy: cell to start checking petterns
     # dx,dy: delta x and y to add sx,sy to get cells for checking patterns
-    # pattern: 1=place color, 2=oppornent color, 8=blank
+    # pattern: W=place color, B=oppornent color, _=blank
     # value: evaluation value for a check,
     #   value > 0: good strategy, equal or more than 999999 means strongly recommended strategy.
     #   value < 0: bad strategy.
     # Program automattically detects a symmetry pattern, so patterns should be defined in x:0..3 andy:0..3 area.
+    # DO NOT NEED define both getting a corner pattern and losing a corner pattern (detected by logic)
     critical_case = {
-        (0,0):[[0,0, 1, 0,[[18111118, -99999]]],
-               [0,0, 0, 1,[[18111118, -99999]]],
-               [0,0, 1, 1,[[18111118, -99999]]],
-               [0,0, 0, 0,[[1,       1000000]]]],
+        (0,0):[[0,0, 1,0, 8, [
+                                ["^W+_W+_$", -99999],
+                                ["^WBW+_W$", -99999],
+                                ["^W_W+BW$", -99999]
+                              ]
+                ],
+               [0,0, 0,1, 8, [
+                                ["^W+_W+_$", -99999],
+                                ["^WBW+_W$", -99999],
+                                ["^W_W+BW$", -99999]
+                              ]
+                ],
+               [0,0, 1,1, 8, [
+                                ["^W+_W+_$", -99999],
+                                ["^WBW+_W$", -99999],
+                                ["^W_W+BW$", -99999]
+                              ]
+                ]
+               ],
 
-        (1,0):[[0,0, 1, 0,[[8181,      -9998],
-                           [81181,     -9998],
-                           [811181,    -9998],
-                           [8188,     999999],
-                           [81188,    999999],
-                           [21222228, 999999],
-                           [81828,    999999]]]],
+        (1,0):[[0,0, 1,0, 8, [
+                                ["^_W+_W.*$",   -99999],
+                                ["^_W+_B+W.*$", -99999],
+                                ["^_W+_+B.*$",  111111],
+                                ["^_W+__W+_.*$",111111],
+                                ["^_W+_+$",     111111],
+                              ]
+                ]
+               ],
 
-        (2,0):[[0,0, 1, 0,[[81181,     -9998],
-                           [81188,    999999],
-                           [811181,    -9998],
-                           [82181,    999999],
-                           [82182,    -99999],
-                           [8211118,   -9998],
-                           [8822128,  -99999],
-                           [8821228,  -99999],
-                           [8811818,   99999],
-                           [8818118,   99999],
-                           [82111118, -99999]]]],
+        (2,0):[[0,0, 1,0, 8, [
+                                ["^_WW+_W.*$",    -99999],
+                                ["^_WW+_B+W.*$",  -99999],
+                                ["^..W+_W+_$",    -99999],
+                                ["^..W+_B+W+_$",  -99999],
+                                ["^_BW+_.*$",     -99999],
+                                ["^__W+B[B|_]+$", -99999],
+                                ["^_BW+B.*$",    1000000],
+                                ["^_WW+_+B.*$",   333333],
+                                ["^_WW+__W+_.*$", 555555],
+                                ["^__W_WW_+$",    555555],
+                                ["^__WW_W_+$",    555555],
+                                ["^_WW+_+$",      777777]
+                              ]
+                ]
+               ],
 
-        (3,0):[[0,0, 1, 0,[[8181,      -9998],
-                           [811181,    -9998],
-                           [882128,   -99999],
-                           [8811818,   99999],
-                           [88212288, -99998]]],
-               [7,0,-1, 0,[[81181,     -9998]]]],
+        (3,0):[[0,0, 1,0, 8, [
+                                ["^_W_W.*",        -99999],
+                                ["^_WWW+_W+$",     -99999],
+                                ["^_WWW+_B+W.*$",  -99999],
+                                ["^...W+_W+_$",    -99999],
+                                ["^...W+_B+W+_$",  -99999],
+                                ["^___W+B[B|_]+$", -99999],
+                                ["^_W_W+B+$",      -99999],
+                                ["^__BWBB_+$",     -99999],
+                                ["^_BBW+_.*$",     -99999],
+                                ["^_WWW+_+B.*$",   333333],
+                                ["^_WwW+__W+_.*$", 555555],
+                                ["^__WW_W_+$",     555555],
+                                ["^_WWW+_+$",      777777],
+                                ["^_BBW+B.*$",    1000000]
+                              ]
+                ]
+               ],
 
-        (1,1):[[0,0, 1, 1,[[8181,      -9997],
-                           [81181,     -9997],
-                           [811181,    -9997],
-                           [8111181,   -9997]]],
-               [1,1, 0, 0,[[1,         -9998]]]]
+        (1,1):[[0,0, 1,1, 8, [
+                                ["^_W+_W.*$",   -99999],
+                                ["^_W+_B+W.*$", -99999]
+                              ],
+                ],
+               [1,1, 0,0, 1, [
+                                ["W",            -9998]
+                              ]
+                ]
+               ],
+
+        (2,2):[[0,0, 1,1, 8, [
+                                ["^_WW+_+$",    777777]
+                              ],
+                ]
+               ],
+
+        (3,3):[[0,0, 1,1, 8, [
+                                ["^_WWW+_+$",   777777]
+                              ],
+                ]
+               ]
     }
 
     # Thought program working flag in multi-core
@@ -168,17 +227,36 @@ class Board_class:
         self.board[3][4] = Board_class.BLACK
         self.board[4][3] = Board_class.BLACK
 
+        '''
+        # Pre-assigned test pattern
+        self.board[2][5] = Board_class.BLACK
+        self.board[3][4] = Board_class.BLACK
+        self.board[3][5] = Board_class.BLACK
+        self.board[4][4] = Board_class.BLACK
+        self.board[4][5] = Board_class.BLACK
+        self.board[5][3] = Board_class.BLACK
+
+        self.board[1][5] = Board_class.WHITE
+        self.board[2][2] = Board_class.WHITE
+        self.board[2][3] = Board_class.WHITE
+        self.board[2][4] = Board_class.WHITE
+        self.board[3][2] = Board_class.WHITE
+        self.board[3][3] = Board_class.WHITE
+        self.board[4][2] = Board_class.WHITE
+        self.board[4][3] = Board_class.WHITE
+        '''
+
     '''
     # Dump the board matrix to console (for debugging)
     '''
     def dump(self):
-        print("  01234567")
+        print(" |0|1|2|3|4|5|6|7|")
         for y in list(range(8)):
-            print(str(y)+":", end = "")
+            print(str(y)+"|", end = "")
             for x in list(range(8)):
-                print(self.board[y][x], end = "")
+                print("_" if self.board[y][x] == Board_class.BLANK else self.board[y][x], end = "|")
             print("")
-        print("W,B=", str(self.scores()) + "\n===============")
+        print("W,B=", str(self.scores()) + "\n===================")
 
     '''
     # Set board matrix having 'board' instance into 'myself' matrix
@@ -231,12 +309,36 @@ class Board_class:
         return(nw, nb)
 
     '''
+    # Get tought mode at the moment in auto mode
+    '''
+    def get_auto_mode(self, turn_color):
+        sc = self.scores()
+        rt = (sc[0] if turn_color == Board_class.WHITE else sc[1]) / (sc[0] + sc[1])
+        
+        # Having much cells
+        if rt >= 0.8:
+            return Board_class.EVAL_MODE_pieces
+
+        # balance or predominane
+        if rt >= 0.6:
+            return Board_class.EVAL_MODE_few_candidates
+
+        # balance or predominane
+        if rt >= 0.2:
+            return Board_class.EVAL_MODE_many_places
+
+        # Having few cells
+        return Board_class.EVAL_MODE_pieces
+
+    '''
     # Cell (x,y) is 'critical' cell for place_color turn.
     # 'place_color' is piece color placing at (x,y)
     # The significant function for game strategy,
     # PLEASE CUSTOMIZE HERE!!
     '''
     def is_critical_cell(self, x, y, place_color):
+        global othello
+        
         # Oppornent color
         opn = self.reverse_color(place_color)
 
@@ -244,29 +346,89 @@ class Board_class:
         cands = self.candidates(opn)
         if len(cands) == 0:
             return 100000
-        
+
+        # DO NOT check critical case if 2 corners have been occupied
+        '''
+        global othello
+        c = 0
+        for cx in [0,7]:
+            for cy in [0,7]:
+                c += 0 if othello.board[cy][cx] == Board_class.BLANK else 1
+                if c >= 2:
+                    return 0
+        '''
+
         # Check critical case
         posi = 0
         nega = 0
-        if x >= 4:
-            px = 7 - x
-            mx = -1
-        else:
-            px = x
-            mx = 1
+            
+        # Symmetry1 (square corners)
+        xy_flip = False
+        if x == y or x + y == 7:
+            if x >= 4:
+                px = 7 - x
+                mx = -1
+            else:
+                px = x
+                mx = 1
 
-        if y >= 4:
-            py = 7 - y
-            my = -1
-        else:
-            py = y
-            my = 1
+            if y >= 4:
+                py = 7 - y
+                my = -1
+            else:
+                py = y
+                my = 1
 
+        # Symmetry2 (other cells)
+        else:
+            # x axis
+            if y % 7 == 0:
+                py = 0
+                my = -1 if y>=4 else 1
+                if x >= 4:
+                    px = 7 - x
+                    mx = -1
+                else:
+                    px = x
+                    mx = 1
+
+            # y axis
+            elif x % 7 == 0:
+                xy_flip = True
+                py = 0
+                mx = -1 if x>=4 else 1
+                if y >= 4:
+                    px = 7 - y
+                    my = -1
+                else:
+                    px = y
+                    my = 1
+            else:
+                px = x
+                py = y
+                mx = 1
+                my = 1
+
+        # Patern match
         place = (px, py)
+#        print("PLACE:", (x,y), place, xy_flip, mx, my)
         if place in Board_class.critical_case:
+            # Pattern definitions (=case)
             for case in Board_class.critical_case[place]:
-                ptns = case[4]
-                for ptn in ptns:
+                # xy_flip
+                if xy_flip:
+                    sx = case[1]
+                    dx = case[3] * mx
+                    if mx == -1:
+                        sx = 7 - sx
+
+                    sy = case[0]
+                    dy = case[2] * my
+                    if my == -1:
+                        sy = 7 - sy
+
+                # NOT xy-flip
+                else:
                     sx = case[0]
                     dx = case[2] * mx
                     if mx == -1:
@@ -277,117 +439,49 @@ class Board_class:
                     if my == -1:
                         sy = 7 - sy
 
-                    bd = 0
-                    for i in list(range(len(str(ptn[0])))):
-                        p = self.board[sy][sx]
-                        if p == place_color:
-                            pn = 1
-                        elif p == Board_class.BLANK:
-                            pn = 8
-                        else:
-                            pn = 2
-                            
-                        bd = bd * 10 + pn
-                        sx += dx
-                        sy += dy
+                # Getting a pices line
+                pieces = ""
+                for i in list(range(case[4])):
+                    p = self.board[sy][sx]
+                    if p == place_color:
+                        pieces += "W"
+                    elif p == Board_class.BLANK:
+                        pieces += "_"
+                    else:
+                        pieces += "B"
+                        
+                    # Next cell
+                    sx += dx
+                    sy += dy
 
-                    if bd == ptn[0]:
-#                        print("===CRITICAL MATCH(N):", x, y, place, ptn)
+                # Pattern match with regular expressions
+                ptns = case[5]
+                for ptn in ptns:
+
+                    if not re.match(ptn[0], pieces) is None:
+#                        print("===CRITICAL MATCH:", x, y, place, pieces, ptn)
                         if ptn[1] > 0:
                             posi += ptn[1]
                         else:
                             nega += ptn[1]
 
-        # Periphery
-        if x == 0 or x == 7:
-            # Occupy a vetical side of frame
-            blank = 0
-            white = 0
-            black = 0
-            w = 0
-            b = 0
-            prev = -1
-            for cy in list(range(8)):
-                col = self.board[cy][x]
-                if col == Board_class.WHITE:
-                    w += 1
-                elif col == Board_class.BLACK:
-                    b += 1
-
-                if col != prev:
-                    if col == Board_class.BLANK:
-                        blank += 1
-                        prev = Board_class.BLANK
-                    elif col == Board_class.WHITE:
-                        white += 1
-                        prev = Board_class.WHITE
-                    else:
-                        black += 1
-                        prev = Board_class.BLACK
-                        
-                    if white * black != 0 or white + black >= 2:
-                        break
-                        
-            if white == 1 and black == 0 and w >= 3:
-                if place_color == Board_class.WHITE:
-                    posi += 999 + w * 1000
-                else:
-                    nega -= 999 + w * 1000
-
-            if black == 1 and white == 0 and b >= 3:
-                if place_color == Board_class.BLACK:
-                    posi += 999 + b * 1000
-                else:
-                    nega -= 999 + b * 1000
-
-        elif y == 0 or y == 7:
-            # Occupy a horizontal side of frame
-            blank = 0
-            white = 0
-            black = 0
-            w = 0
-            b = 0
-            prev = -1
-            for cx in list(range(8)):
-                col = self.board[y][cx]
-                if col == Board_class.WHITE:
-                    w += 1
-                elif col == Board_class.BLACK:
-                    b += 1
-                    
-                if col != prev:
-                    if col == Board_class.BLANK:
-                        blank += 1
-                        prev = Board_class.BLANK
-                    elif col == Board_class.WHITE:
-                        white += 1
-                        prev = Board_class.WHITE
-                    else:
-                        black += 1
-                        prev = Board_class.BLACK
-                        
-                    if white * black != 0 or white + black >= 2:
-                        break
-                        
-            if white == 1 and black == 0 and w >= 3:
-                if place_color == Board_class.WHITE:
-                    posi += 999 + w * 1000
-                else:
-                    nega -= 999 + w * 1000
-
-            if black == 1 and white == 0 and b >= 3:
-                if place_color == Board_class.BLACK:
-                    posi += 999 + b * 1000
-                else:
-                    nega -= 999 + b * 1000
-
-        # Give a corner to oppornent
+        # Give a corner or edge to oppornent
         for cand in cands:
-            if cand[0] % 7 == 0 and cand[1] % 7 == 0:
-                nega -= 999999
+            if cand[0] % 7 == 0:
+                if cand[1] % 7 == 0:
+                    nega -= 999999
+                else:
+                    nega -= ((int(abs(cand[1] - 3.5)) + 1) * 1000)
+            elif cand[1] % 7 == 0:
+                    nega -= ((int(abs(cand[0] - 3.5)) + 1) * 1000)
+
+        # Get a corner in safe
+#        if nega >= 0 and x % 7 == 0 and y % 7 == 0:
+        if nega > -999999 and x % 7 == 0 and y % 7 == 0:
+            return 1000000 + posi
 
         # Defence takes precedence over offence except top priority offence
-        if posi < 999999 and nega < 0:
+        if posi < 1000000 and nega < 0:
             return nega
         
         return posi
@@ -430,6 +524,27 @@ class Board_class:
         sign_scores = self.get_sign(board1["scores"][idx], board2["scores"][idx])
         sign_turns = self.get_sign(board2["turns"], board1["turns"])
         sign_mycands = self.get_sign(board1["mycands"], board2["mycands"])
+
+        # Positive Critical case
+        if board1["critical"] and board1["evaluations"][idx] > 0:
+            if board2["critical"] and board2["evaluations"][idx] > 0:
+                # Small number of turn is better
+                if sign_turns!= 0:
+                    return sign_turns
+
+                # Large evaluations value is better
+                if sign_eval != 0:
+                    return sign_eval
+                
+                # Large number of score is better
+                if sign_scores != 0:
+                    return sign_scores
+                
+            else:
+                return 1
+
+        elif board2["critical"] and board2["evaluations"][idx] > 0:
+            return 2
         
         # Negative Critical case
         if board1["evaluations"][idx] < 0:
@@ -441,33 +556,8 @@ class Board_class:
         if board2["evaluations"][idx] < 0:
             return 1
 
-        # Positive Critical case
-        if board1["critical"] and board1["evaluations"][idx] > 0:
-            if board2["critical"] and board2["evaluations"][idx] > 0:
-                # Large evaluations value is better
-                if sign_eval != 0:
-                    return sign_eval
-                
-                # Large number of score is better
-                if sign_scores != 0:
-                    return sign_scores
-
-                # Small number of turn is better
-                if sign_turns!= 0:
-                    return sign_turns
-                
-            else:
-                return 1
-
-        elif board2["critical"] and board2["evaluations"][idx] > 0:
-            return 2
-
         # Pieces
         if Board_class.eval_mode == Board_class.EVAL_MODE_pieces:
-            # Small number of turn is better
-            if sign_turns!= 0:
-                return sign_turns
-                
             # Large scores value if better
             if sign_scores != 0:
                 return sign_scores
@@ -475,17 +565,19 @@ class Board_class:
             # Many my candidates is better
             if sign_mycands != 0:
                 return sign_mycands
-
+                
         # Pieces (inverse)
         elif Board_class.eval_mode == Board_class.EVAL_MODE_pieces_inverse:
-            # Small number of turn is better
-            if sign_turns!= 0:
-                return sign_turns
-                
             # Little scores value if better
             if sign_scores != 0:
                 return (sign_scores % 2) + 1
             
+            # Many my candidates is better
+            if sign_mycands != 0:
+                return sign_mycands
+                
+        # Many cells to place
+        elif Board_class.eval_mode == Board_class.EVAL_MODE_many_places:
             # Many my candidates is better
             if sign_mycands != 0:
                 return sign_mycands
@@ -611,24 +703,6 @@ class Board_class:
         return len(self.candidates(Board_class.WHITE)) + len(self.candidates(Board_class.BLACK)) == 0
 
     '''
-    # Get tought mode at the moment in auto mode
-    '''
-    def get_auto_mode(self, turn_color):
-        sc = self.scores()
-        rt = (sc[0] if turn_color == Board_class.WHITE else sc[1]) / (sc[0] + sc[1])
-        
-        # Having much cells
-        if rt >= 0.8:
-            return Board_class.EVAL_MODE_pieces
-        
-        # balance or predominane
-        if rt >= 0.5:
-            return Board_class.EVAL_MODE_few_candidates
-
-        # Having few cells
-        return Board_class.EVAL_MODE_pieces
-
-    '''
     # Trace a game tree by recursion call (depth first)
     # Return a 'best' board information in the possibles.
     #   selected_turn: {"scores": (w,b), "evaluations": (w,b), "checkmate": boolean, "turns": turns to the board, "board": board instance}
@@ -684,7 +758,7 @@ class Board_class:
                 # Checkmate (Black win)
                 if sc[0] == 0:
                     # Placing bad, cut this path
-                    if place_color == Board_class.WHITE:
+                    if turn_color == Board_class.WHITE:
 #                        print("---CHECKMATED PATH W+++")
                         return None
                     # Placing best
@@ -695,7 +769,7 @@ class Board_class:
                 # Checkmate (White win)
                 elif sc[1] == 0:
                     # Placing bad, cut this path
-                    if place_color == Board_class.BLACK:
+                    if turn_color == Board_class.BLACK:
 #                        print("+++CHECKMATED PATH B+++")
                         return None
                     # Placing best
@@ -706,7 +780,13 @@ class Board_class:
                 # No candidate to place
                 elif cl == 0:
 #                    print("***NO PLACE D***")
-                    cand_score = {"scores": sc, "mycands": cands_len, "opcands": cl, "evaluations": (100000, -100000) if place_color == Board_class.WHITE else (-100000, 100000), "critical": True, "checkmate": True, "turns": current_level, "board": None}
+#                    cand_score = {"scores": sc, "mycands": cands_len, "opcands": cl, "evaluations": (100000, -100000) if place_color == Board_class.WHITE else (-100000, 100000), "critical": True, "checkmate": False, "turns": current_level, "board": None}
+                    # Turn color is making checkmate (win)
+                    if turn_color == place_color:
+                        cand_score = {"scores": sc, "mycands": cands_len, "opcands": cl, "evaluations": (100000, -100000) if place_color == Board_class.WHITE else (-100000, 100000), "critical": True, "checkmate": False, "turns": current_level, "board": None}
+                    # Oppornent color is making checkmate (lose)
+                    else:
+                        cand_score = {"scores": sc, "mycands": cands_len, "opcands": cl, "evaluations": (-100000, 100000) if place_color == Board_class.WHITE else (100000, -100000), "critical": True, "checkmate": False, "turns": current_level, "board": None}
 
                 # Think more deeply
                 else:
@@ -717,7 +797,13 @@ class Board_class:
                     # Placing bad position, cut this path
                     if critical < 0:
 #                        print("+++BAD PATH+++", critical)
-                        continue
+                        # Turn player never choses this place
+#                        if myturn and critical <= -99999:
+#                            continue
+                        think_deep = not myturn
+                        
+                        # Low risk for my turn, or oppornent has to accept this choses 
+                        cand_score = {"scores": sc, "mycands": cands_len, "opcands": cl, "evaluations": (critical, -critical) if place_color == Board_class.WHITE else (-critical, critical), "critical": False, "checkmate": False, "turns": current_level, "board": None}
 
                     # Placing very good position
                     elif critical > 0:
@@ -737,13 +823,20 @@ class Board_class:
                     if think_deep:
                         if cand_max is None:
                             cand_max = cand_score
-                            cands_deep.insert(0, cand)
-                        elif self.compare(cand_score, cand_max, 0 if place_color == Board_class.WHITE else 1) == 1:
-                            cand_max = cand_score
-                            cands_deep.insert(0, cand)
+                            cands_deep.insert(0, (cand, cand_score))
+                        # Sort descending
                         else:
-                            cands_deep.append(cand)
-                            
+                            ins = -1
+                            for lst in cands_deep:
+                                ins += 1
+                                if self.compare(cand_score, lst[1], 0 if place_color == Board_class.WHITE else 1) == 1:
+                                    cands_deep.insert(ins, (cand, cand_score))
+                                    cand_score = None
+                                    break
+
+                            if not cand_score is None:
+                                cands_deep.append((cand, cand_score))
+
                         cand_score = None
 
                 # Compare the result of simulation board and the best board until now
@@ -755,7 +848,8 @@ class Board_class:
                             max_score = cand_score
 
         # Think deeply
-        for cand in cands_deep:
+        for lst in cands_deep:
+            cand = lst[0]
 #            print("===DEEP THINK ", current_level, background, place_color, ":", cand)
             turn.set(self)
             turn.place_at(cand[0], cand[1], place_color, reverse=True)
@@ -763,12 +857,12 @@ class Board_class:
             if not cand_score is None:
                 if max_score is None:
                     max_score = cand_score
+                # Try deep thought while candidate is top level critical
                 else:
                     if self.compare(cand_score, max_score, 0 if place_color == Board_class.WHITE else 1) == 1:
                         max_score = cand_score
-                    break
-
-#                break
+                    if (not cand_score["critical"]) or (cand_score["critical"] and cand_score["evaluations"][0 if place_color == Board_class.WHITE else 1] < 750000):
+                        break
 
         # garbage collection
         del turn
@@ -796,6 +890,8 @@ class Board_class:
     '''
     def evaluate_candidates(self, turn_color, background):
         global othello, cands_list_yield, cands_list_generator
+        
+        op_color = self.reverse_color(turn_color)
 
         # Tracing tree job
 #        print("START JOB:", "BG" if background else "FG")
@@ -832,11 +928,11 @@ class Board_class:
 
 #            gc.collect()
 
-            print("EVAL CANDIDATE:", background, cand)
+            print("*****EVAL CANDIDATE:", background, cand)
             turn = self.copy("candidate")
             cand_score = None
 
-            # Placed
+            # Place my turn
             if turn.place_at(cand[0], cand[1], turn_color, reverse=True) > 0:
                 # Show CPU thought
                 if background:
@@ -846,9 +942,13 @@ class Board_class:
                     # Show the current CPU thought in main core (it seems to have something problems SPI/UART use in 2nd core)
                     display_othello(othello, turn_color)
                 
-                # Checkmate
+                # Get status just after placing my piece
                 sc = turn.scores()
                 cl = len(turn.candidates(self.reverse_color(turn_color)))
+#                cl = len(turn.candidates(self.turn_color)
+#                print("CANDIDATE PLACED:", cand[0], cand[1], sc, cl)
+
+                # Checkmate
                 if sc[0] == 0:          # white is zero (lose)
                     if background:
                         Board_class.evaluating_places[1] = (-1, -1)
@@ -872,6 +972,7 @@ class Board_class:
                 # Take a critical cell (>0: very good for this turn, <0: very bad)
                 else:
                     critical = turn.is_critical_cell(cand[0], cand[1], turn_color)
+#                    print("CANDIDATE CRITICAL:", cand[0], cand[1], critical)
                     if critical != 0:
 #                    if critical > 0:
                         print("***FIND CRITICAL PLACE:", cand[0], cand[1], critical)
@@ -1330,8 +1431,8 @@ def display_othello(othello, next_turn, placed_cell = None):
             if Board_class.white_is_cpu:
                 GT.show_graphic_text(str(Board_class.LIMIT_CANDIDATES), 4, 35, 1, 1, 0, col, LCD.BROWN)
                 GT.show_graphic_text("C", 26, 20, 3, 3, 0, col, LCD.BROWN)
-                GT.show_graphic_text(str(Board_class.eval_mode), 57, 25, 1, 1, 0, LCD.SKYBLUE if Board_class.auto_mode else col, LCD.BROWN)
-                GT.show_graphic_text(str(Board_class.MAX_DEPTH), 57, 35, 1, 1, 0, col, LCD.BROWN)
+                GT.show_graphic_text(str(Board_class.eval_mode), 57, 23, 1, 1, 0, LCD.SKYBLUE if Board_class.auto_mode else col, LCD.BROWN)
+                GT.show_graphic_text(str(Board_class.MAX_DEPTH), 57, 36, 1, 1, 0, col, LCD.BROWN)
             else:
                 GT.show_graphic_text("M", 26, 20, 3, 3, 0, col, LCD.BROWN)
             
@@ -1372,8 +1473,8 @@ def display_othello(othello, next_turn, placed_cell = None):
             if Board_class.black_is_cpu:
                 GT.show_graphic_text(str(Board_class.LIMIT_CANDIDATES), 4, 50, 1, 1, 0, col, LCD.BROWN)
                 GT.show_graphic_text("C", 26, 35, 3, 3, 0, col, LCD.BROWN)
-                GT.show_graphic_text(str(Board_class.eval_mode), 57, 40, 1, 1, 0, LCD.SKYBLUE if Board_class.auto_mode else col, LCD.BROWN)
-                GT.show_graphic_text(str(Board_class.MAX_DEPTH), 57, 50, 1, 1, 0, col, LCD.BROWN)
+                GT.show_graphic_text(str(Board_class.eval_mode), 57, 38, 1, 1, 0, LCD.SKYBLUE if Board_class.auto_mode else col, LCD.BROWN)
+                GT.show_graphic_text(str(Board_class.MAX_DEPTH), 57, 51, 1, 1, 0, col, LCD.BROWN)
             else:
                 GT.show_graphic_text("M", 26, 35, 3, 3, 0, col, LCD.BROWN)
 
@@ -1674,7 +1775,7 @@ if __name__=='__main__':
         undo_board.set(othello)
         display_othello(othello, Board_class.WHITE)
         othello.dump()
-        
+
         # Random strategy
         Board_class.strategy = Board_class.strategies[int(time.time()) % len(Board_class.strategies)]
 
@@ -1799,7 +1900,5 @@ if __name__=='__main__':
         # Show scores
         score = othello.scores()
         print("GAME RESULT: WHITE=", score[0], "/ BLACK=", score[1])
-    
-
 
 
